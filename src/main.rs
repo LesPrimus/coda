@@ -10,7 +10,7 @@ const PORT: u16 = 4000;
 #[tokio::main]
 async fn main() {
     let app = Router::new()
-        .route("/artists/{name}", get(handlers::artists::get_artists));
+        .route("/artists/{name}", get(handlers::artists::get_artist));
 
     let listener = tokio::net::TcpListener::bind(
         format!("{}:{}", HOST, PORT)

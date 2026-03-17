@@ -18,7 +18,7 @@ async fn main() {
     });
 
     let app = Router::new()
-        .route("/artists/{name}", get(handlers::artists::get_artist))
+        .route("/artist/{artist}/album/{album}/tracks", get(handlers::artists::get_album_tracks))
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind(

@@ -1,103 +1,57 @@
 use crate::errors::AppError;
-use crate::models::{self, AppState, Artist};
+use crate::models::AppState;
 use axum::extract::{Path, State};
 use axum::Json;
+use serde_json::Value;
 use std::sync::Arc;
 
-pub async fn get_artist(
+
+pub async fn get_album_tracks(
     State(state): State<Arc<AppState>>,
-    Path(name): Path<String>,
-) -> Result<Json<Artist>, AppError> {
-    let url = format!(
-        "{}/artist/?query={}&fmt=json",
+    Path((artist, album)): Path<(String, String)>,
+) -> Result<Json<Value>, AppError> {
+    // Step 1: search for the release
+    let search_url = format!(
+        "{}/release/?query=release:{} AND artist:{}&fmt=json&limit=1",
         state.base_url,
-        urlencoding::encode(&name)
+        urlencoding::encode(&album),
+        urlencoding::encode(&artist),
     );
 
-    let artist_search_response = state
+    let search: Value = state
         .client
-        .get(url)
-        .header("User-Agent", state.user_agent.clone())
+        .get(&search_url)
+        .header("User-Agent", &state.user_agent)
         .send()
         .await?
-        .json::<models::ArtistSearchResponse>()
+        .json()
         .await?;
 
-    let artist = artist_search_response
-        .artists
-        .into_iter()
-        .next()
-        .ok_or(anyhow::anyhow!("No artist found for {}", name))?;
+    let release_id = search["releases"][0]["id"]
+        .as_str()
+        .ok_or(anyhow::anyhow!("No release found"))?;
 
-    Ok(Json(artist))
-}
+    // Step 2: fetch recordings
+    let release_url = format!(
+        "{}/release/{}?inc=recordings&fmt=json",
+        state.base_url, release_id
+    );
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use mockito::Server;
-    use rstest::*;
+    let release: Value = state
+        .client
+        .get(&release_url)
+        .header("User-Agent", &state.user_agent)
+        .send()
+        .await?
+        .json()
+        .await?;
 
-    #[fixture]
-    fn artist_json() -> String {
-        serde_json::json!({
-            "artists": [
-                { "id": "1", "name": "Radiohead", "score": 100 }
-            ]
-        })
-            .to_string()
-    }
+    let tracks: Vec<&Value> = release["media"]
+        .as_array()
+        .ok_or(anyhow::anyhow!("No media found"))?
+        .iter()
+        .flat_map(|medium| medium["tracks"].as_array().into_iter().flatten())
+        .collect();
 
-    #[fixture]
-    fn empty_artists_json() -> String {
-        serde_json::json!({ "artists": [] }).to_string()
-    }
-
-    fn make_state(base_url: String) -> State<Arc<AppState>> {
-        State(Arc::new(AppState {
-            client: reqwest::Client::new(),
-            base_url,
-            user_agent: "coda/1.0".to_string(),
-        }))
-    }
-
-    #[rstest]
-    #[tokio::test]
-    async fn test_returns_first_artist(artist_json: String) {
-        let mut server = Server::new_async().await;
-        server
-            .mock("GET", mockito::Matcher::Any)
-            .with_status(200)
-            .with_header("content-type", "application/json")
-            .with_body(&artist_json)
-            .create_async()
-            .await;
-
-        let result = get_artist(make_state(server.url()), Path("radiohead".to_string())).await;
-
-        let Json(artist) = result.unwrap();
-        assert_eq!(artist.name, "Radiohead");
-        assert_eq!(artist.id, "1");
-    }
-
-    #[rstest]
-    #[tokio::test]
-    async fn test_errors_when_no_artists(empty_artists_json: String) {
-        let mut server = Server::new_async().await;
-        server
-            .mock("GET", mockito::Matcher::Any)
-            .with_status(200)
-            .with_header("content-type", "application/json")
-            .with_body(&empty_artists_json)
-            .create_async()
-            .await;
-
-        let result = get_artist(
-            make_state(server.url()),
-            Path("unknown_xyz".to_string()),
-        )
-            .await;
-
-        assert!(result.is_err());
-    }
+    Ok(Json(serde_json::json!(tracks)))
 }

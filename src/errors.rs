@@ -1,5 +1,6 @@
 use axum::{http::StatusCode, response::IntoResponse};
 
+#[derive(Debug)]
 pub struct AppError(anyhow::Error);
 
 impl IntoResponse for AppError {
